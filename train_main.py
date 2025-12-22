@@ -158,14 +158,12 @@ def main(config_path: str) -> None:
     ga_horizon = training_cfg.get("ga_horizon", 5)
     ga_params = cfg.get("heuristic", {}).get("ga", {})
     planner = None
+    planners = None
+    eval_planner = None
     # Placeholder for vectorised environment (training) and evaluation environment
     n_rollout_threads = training_cfg.get("n_rollout_threads", 1)
     n_eval_rollout_threads = training_cfg.get("n_eval_rollout_threads", 1)
-    if use_ga:
-        # Planner is bound to the base environment; if using vectorised env the
-        # planner will refine actions per environment instance on the fly.
-        planner = HybridPlanner(env=base_env, horizon=ga_horizon, use_ga=True, ga_params=ga_params)
-        logger.info("GA-based planner enabled for action refinement")
+
     # Create vectorised training environment if n_rollout_threads > 1
     if n_rollout_threads > 1:
         def make_env_fn() -> Any:
@@ -176,6 +174,17 @@ def main(config_path: str) -> None:
     else:
         env = base_env
         is_vec = False
+    if use_ga:
+        if is_vec:
+            planners = [
+                HybridPlanner(env=env_i, horizon=ga_horizon, use_ga=True, ga_params=ga_params)
+                for env_i in env.env_list
+            ]
+            eval_planner = planners[0]
+        else:
+            planner = HybridPlanner(env=env, horizon=ga_horizon, use_ga=True, ga_params=ga_params)
+            eval_planner = planner
+        logger.info("GA-based planner enabled for action refinement")
     # Determine number of episodes and evaluation settings
     episodes = training_cfg.get("episodes", 10)
     evaluate_every = training_cfg.get("evaluate_every", 0)
@@ -208,8 +217,8 @@ def main(config_path: str) -> None:
                         obs_list = obs_batch[i].tolist() if isinstance(obs_batch[i], np.ndarray) else obs_batch[i]
                         acts, log_ps = agent.select_actions(obs_list)
                         # Refine actions using planner if enabled
-                        if planner is not None:
-                            acts = planner.refine_actions(acts)
+                        if planners is not None:
+                            acts = planners[i].refine_actions(acts)
                         actions_batch.append(acts)
                         log_probs_batch.append(log_ps)
                     else:
@@ -263,8 +272,8 @@ def main(config_path: str) -> None:
                 obs = eval_env.reset(train=False)
                 while True:
                     actions, _ = agent.select_actions(obs)
-                    if planner is not None:
-                        actions = planner.refine_actions(actions)
+                    if eval_planner is not None:
+                        actions = eval_planner.refine_actions(actions)
                     obs, rewards, done, _ = eval_env.step(actions, one_hot=False)
                     # Sum reward across agents
                     flat_rewards = [r[0] if isinstance(r, list) else r for r in rewards]
