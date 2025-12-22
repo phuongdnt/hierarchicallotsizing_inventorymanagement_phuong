@@ -199,7 +199,9 @@ class NetworkInventoryEnv(BaseInventoryEnv):
         # State variables
         self.inventory: List[int] = []
         self.backlog: List[int] = []
+        self.backlog_history: List[List[int]] = []
         self.pipeline_orders: List[List[int]] = []
+        
         # Demand list holds list per retailer if eval_data_dirs provided; else generated
         self.external_demand_list: List[List[int]] = []
         self.step_num: int = 0
@@ -221,6 +223,7 @@ class NetworkInventoryEnv(BaseInventoryEnv):
         self.step_num = 0
         # Initialise state
         self.inventory = [self.init_inventory for _ in range(self.agent_num)]
+        self.backlog_history = [[] for _ in range(self.agent_num)]
         self.backlog = [0 for _ in range(self.agent_num)]
         self.pipeline_orders = [
             [self.init_outstanding for _ in range(self.lead_time)]
@@ -405,6 +408,7 @@ class NetworkInventoryEnv(BaseInventoryEnv):
             else:
                 self.backlog[i] = 0
                 self.inventory[i] = -unmet
+            self.backlog_history[i].append(self.backlog[i])
             # Determine new order to parent; last orders come from actions list
             new_order = actions[i]
             # Append new order into pipeline and remove oldest
