@@ -19,6 +19,7 @@ analysis, consider using the functions in :mod:`inventory_management_RL_Lot.util
 from __future__ import annotations
 
 import argparse
+import os
 import yaml
 import torch
 import numpy as np
@@ -30,10 +31,57 @@ from .envs.network_env import NetworkInventoryEnv
 from .utils.logger import setup_logger
 from .utils.metrics import compute_episode_costs, compute_bullwhip
 
+def _resolve_config_path(path: str) -> str:
+    if os.path.isabs(path) and os.path.exists(path):
+        return path
+    candidates = [
+        os.path.abspath(os.path.join(os.getcwd(), path)),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), path)),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return path
+
+
+def _resolve_env_paths(cfg: Dict[str, Any], config_path: str) -> Dict[str, Any]:
+    env_cfg = cfg.get("env", {})
+    base_dir = os.path.dirname(os.path.abspath(config_path))
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    cwd = os.getcwd()
+
+    def resolve_path(path: str) -> str:
+        candidates = [
+            os.path.abspath(os.path.join(cwd, path)),
+            os.path.abspath(os.path.join(base_dir, path)),
+            os.path.abspath(os.path.join(module_dir, path)),
+        ]
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return os.path.abspath(os.path.join(base_dir, path))
+
+    eval_data_dir = env_cfg.get("eval_data_dir")
+    if isinstance(eval_data_dir, str) and not os.path.isabs(eval_data_dir):
+        env_cfg["eval_data_dir"] = os.path.normpath(resolve_path(eval_data_dir))
+    eval_data_dirs = env_cfg.get("eval_data_dirs")
+    if isinstance(eval_data_dirs, list):
+        resolved_dirs = []
+        for d in eval_data_dirs:
+            if isinstance(d, str) and not os.path.isabs(d):
+                resolved_dirs.append(os.path.normpath(resolve_path(d)))
+            else:
+                resolved_dirs.append(d)
+        env_cfg["eval_data_dirs"] = resolved_dirs
+    cfg["env"] = env_cfg
+    return cfg
+
 
 def parse_config(path: str) -> Dict[str, Any]:
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+    resolved_path = _resolve_config_path(path)
+    with open(resolved_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    return _resolve_env_paths(cfg, resolved_path)
 
 
 def build_environment(cfg: Dict[str, Any]):
