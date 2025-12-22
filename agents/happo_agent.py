@@ -146,6 +146,8 @@ class HAPPOAgent:
         rewards_tensor = torch.tensor(data["rewards"], dtype=torch.float32, device=self.device)
         next_obs_tensor = torch.tensor(data["next_obs"], dtype=torch.float32, device=self.device)
         dones_tensor = torch.tensor(data["done"], dtype=torch.float32, device=self.device)
+        if dones_tensor.dim() > 1:
+            dones_tensor = dones_tensor.max(dim=1).values
         # Flatten observations to global state
         states = obs_tensor.view(T, -1)
         next_states = next_obs_tensor.view(T, -1)
