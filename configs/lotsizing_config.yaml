@@ -1,0 +1,7 @@
+# Configuration for lot-sizing heuristics
+ga:
+  pop_size: 30
+  generations: 40
+  mutation_rate: 0.1
+dalsa:
+  enabled: false

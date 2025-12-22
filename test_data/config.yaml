@@ -1,0 +1,17 @@
+# Configuration parameters for inventory management environments
+
+num_levels: 3               # number of echelons/agents in the supply chain
+episode_length: 200         # number of time steps per episode
+action_dim: 21              # discrete action space size (0..20 order quantities)
+lead_time: 2                # delivery lead time in periods
+inventory_init: 10          # initial inventory units at each echelon
+order_init: 10              # initial outstanding orders (pipeline) at each echelon
+holding_costs: [1.0, 1.0, 1.0]   # per unit cost for keeping inventory per period
+backorder_costs: [1.0, 1.0, 1.0] # per unit cost for backorders per period
+fixed_cost: 5.0             # fixed cost incurred whenever a positive order is placed
+price_discount: false       # whether to apply price discount for larger order quantities
+discount_levels: [1.0, 0.95, 0.9, 0.85, 0.8]  # multipliers per range of quantities
+random_shipping_loss: false # whether deliveries suffer random losses
+lost_rate: 0.1              # maximum fraction of shipment lost if random_shipping_loss
+merton_demand: true         # if true use Merton process for evaluation data else use Poisson
+training_distribution: merton  # distribution for generating training demand sequences (merton or poisson)
