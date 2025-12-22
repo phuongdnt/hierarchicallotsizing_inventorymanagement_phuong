@@ -145,6 +145,7 @@ class SerialInventoryEnv:
         # Environment state (initialised in reset)
         self.inventory: List[int] = []
         self.backlog: List[int] = []
+        self.backlog_history: List[List[int]] = []
         self.pipeline_orders: List[List[int]] = []
         self.demand_list: List[int] = []
         self.step_num: int = 0
@@ -176,6 +177,7 @@ class SerialInventoryEnv:
         self.step_num = 0
         self.inventory = [self.init_inventory for _ in range(self.level_num)]
         self.backlog = [0 for _ in range(self.level_num)]
+        self.backlog_history = [[] for _ in range(self.level_num)]
         self.pipeline_orders = [
             [self.init_outstanding for _ in range(self.lead_time)]
             for _ in range(self.level_num)
@@ -406,6 +408,7 @@ class SerialInventoryEnv:
             else:
                 self.backlog[i] = 0
                 self.inventory[i] = -unmet
+            self.backlog_history[i].append(self.backlog[i])
             # Append new order into pipeline
             if i == self.level_num - 1:
                 # Last agent orders according to its action
