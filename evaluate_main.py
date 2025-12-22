@@ -29,7 +29,7 @@ from .agents.happo_agent import HAPPOAgent
 from .envs.serial_env import SerialInventoryEnv
 from .envs.network_env import NetworkInventoryEnv
 from .utils.logger import setup_logger
-from .utils.metrics import compute_episode_costs, compute_bullwhip
+from .utils.metrics import compute_episode_costs, compute_bullwhip, compute_service_levels
 
 def _resolve_config_path(path: str) -> str:
     if os.path.isabs(path) and os.path.exists(path):
@@ -137,6 +137,7 @@ def main(config_path: str, model_path: str) -> None:
     # Run evaluation
     total_costs: List[np.ndarray] = []
     bullwhip_metrics: List[List[float]] = []
+    service_levels: List[List[float]] = []
     for ep in range(n_eval):
         obs = env.reset(train=False)
         reward_hist: List[List[float]] = []
@@ -157,10 +158,13 @@ def main(config_path: str, model_path: str) -> None:
         # Compute bullwhip effect for this episode
         bw = compute_bullwhip(order_hist)
         bullwhip_metrics.append(bw)
+        service_levels.append(compute_service_levels(env.backlog_history))
     avg_costs = np.mean(total_costs, axis=0)
     avg_bw = np.mean(bullwhip_metrics, axis=0)
+    avg_service = np.mean(service_levels, axis=0)
     logger.info(f"Average evaluation cost per agent: {avg_costs}")
     logger.info(f"Average bullwhip effect per agent: {avg_bw}")
+    logger.info(f"Average service level per agent: {avg_service}")
 
 
 if __name__ == "__main__":
