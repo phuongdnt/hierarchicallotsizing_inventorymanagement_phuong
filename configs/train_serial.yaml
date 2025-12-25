@@ -2,40 +2,40 @@ env:
   level_num: 3
   lead_time: 2
   episode_len: 100
-  action_dim: 21
-  init_inventory: 10
+  action_dim: 41
+  init_inventory: 20
   init_outstanding: 10
   holding_cost: [1.0, 1.0, 1.0]
-  backlog_cost: [2.0, 2.0, 2.0]
+  backlog_cost: [10.0, 10.0, 10.0]
   fixed_cost: 1.0
   price_discount: false
   discount_schedule: [1.0, 0.9, 0.8, 0.7, 0.6]
   eval_data_dir: "test_data/test_demand_merton"
 
 agent:
-  hidden_dim: 64
-  critic_hidden_dim: 128
-  actor_lr: 0.0003
-  critic_lr: 0.0003
+  hidden_dim: 128
+  critic_hidden_dim: 256
+  actor_lr: 0.0001
+  critic_lr: 0.0001
   gamma: 0.99
   gae_lambda: 0.95
   eps_clip: 0.2
   value_coef: 0.5
-  entropy_coef: 0.01
+  entropy_coef: 0.05
 
 training:
-  episodes: 50
+  episodes: 5000
   horizon: 100
-  evaluate_every: 10
-  use_ga: true
+  evaluate_every: 100
+  use_ga: false
   ga_horizon: 5
-  save_path: "results/serial_model.pth"
+  save_path: "results/serial_model_seed.pth"
 
   # Number of parallel environment instances for training.  Set to
   # 1 for single‑thread training.  Increasing this value will
   # instantiate multiple independent environment copies and
   # collect experience from all of them before updating the agent.
-  n_rollout_threads: 2
+  n_rollout_threads: 8
 
   # Number of parallel environment instances for evaluation.  During
   # evaluation we typically use a single environment; this option
@@ -51,12 +51,12 @@ training:
 
   # Number of evaluation cycles to ignore before counting towards the
   # early stopping criteria.  Allows the agent to warm up.
-  n_warmup_evaluations: 1
+  n_warmup_evaluations: 20
 
   # Number of evaluation cycles with no improvement after warm‑up
   # before training is terminated.  Only applies when
   # ``early_stop`` is true.
-  n_no_improvement_thres: 5
+  n_no_improvement_thres: 20
 
 heuristic:
   ga:
