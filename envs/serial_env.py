@@ -193,8 +193,9 @@ class SerialInventoryEnv:
             self.eval_index = (self.eval_index + 1) % max(1, self.n_eval)
         else:
             # Generate random demand using the maximum possible action as the upper bound
+            train_demand_max = 20 
             self.demand_list = generate_training_demand(
-                self.episode_len, self.action_dim - 1, distribution="uniform", seed=self.rng_seed
+                self.episode_len, train_demand_max, distribution="uniform", seed=self.rng_seed
             )
         # Reset metrics for bullwhip measurement in evaluation
         self.record_act_sta = [[] for _ in range(self.level_num)]
