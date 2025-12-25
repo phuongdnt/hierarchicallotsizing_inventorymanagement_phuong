@@ -10,7 +10,7 @@ and bullwhip effect.
 
 Usage::
 
-    python evaluate_main.py --config configs/train_serial.yaml --model results/serial_model.pth
+    python evaluate_main.py --config configs/train_serial.yaml --models results/serial_model_seed0.pth results/serial_model_seed1.pth
 
 The evaluation results are printed to the console.  For more advanced
 analysis, consider using the functions in :mod:`inventory_management_RL_Lot.utils.metrics`.
@@ -19,7 +19,9 @@ analysis, consider using the functions in :mod:`inventory_management_RL_Lot.util
 from __future__ import annotations
 
 import argparse
+import logging
 import os
+import glob
 import yaml
 import torch
 import numpy as np
@@ -125,9 +127,9 @@ def load_agent(cfg: Dict[str, Any], model_path: str, env: Any) -> HAPPOAgent:
     return agent
 
 
-def main(config_path: str, model_path: str) -> None:
+def evaluate_model(config_path: str, model_path: str, logger: logging.Logger) -> None:
     cfg = parse_config(config_path)
-    logger = setup_logger()
+
     env = build_environment(cfg)
     n_eval = env.get_eval_num() if hasattr(env, "get_eval_num") else 0
     if n_eval == 0:
@@ -166,10 +168,57 @@ def main(config_path: str, model_path: str) -> None:
     logger.info(f"Average bullwhip effect per agent: {avg_bw}")
     logger.info(f"Average service level per agent: {avg_service}")
 
+def main(config_path: str, model_paths: list[str]) -> None:
+    logger = setup_logger()
+    for model_path in model_paths:
+        logger.info(f"Evaluating model: {model_path}")
+        evaluate_model(config_path, model_path, logger)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate trained inventory RL agent")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file")
-    parser.add_argument("--model", type=str, required=True, help="Path to saved model file")
+    parser.add_argument("--model", type=str, help="Path to saved model file")
+    parser.add_argument("--models", nargs="+", help="One or more model paths to evaluate")
     args = parser.parse_args()
-    main(args.config, args.model)
+    raw_paths = []
+    if args.models:
+        raw_paths.extend(args.models)
+    if args.model:
+        raw_paths.append(args.model)
+
+    if not raw_paths:
+        parser.error("one of --model or --models is required")
+
+    # 2. Xử lý logic tìm file thông minh
+    final_model_paths = []
+    for path in raw_paths:
+        if os.path.isdir(path):
+            # CASE A: Nếu là thư mục -> Lấy hết file .pth bên trong
+            found_files = glob.glob(os.path.join(path, "*.pth"))
+            final_model_paths.extend(found_files)
+            print(f"[Auto-Discovery] Found {len(found_files)} models in directory: {path}")
+        elif "*" in path or "?" in path:
+            # CASE B: Nếu dùng ký tự đại diện (wildcard)
+            found_files = glob.glob(path)
+            final_model_paths.extend(found_files)
+        else:
+            # CASE C: File lẻ bình thường
+            if os.path.exists(path):
+                final_model_paths.append(path)
+            else:
+                print(f"Warning: File not found: {path}")
+
+    # Loại bỏ trùng lặp (nếu có) và sắp xếp lại
+    final_model_paths = sorted(list(set(final_model_paths)))
+
+    if not final_model_paths:
+        print("Error: No valid model files found!")
+        exit(1)
+
+    print(f"Starting evaluation list ({len(final_model_paths)} models):")
+    # In ra danh sách file sẽ chạy để kiểm tra
+    for p in final_model_paths:
+        print(f" - {p}")
+
+    # Gọi hàm main
+    main(args.config, final_model_paths)
