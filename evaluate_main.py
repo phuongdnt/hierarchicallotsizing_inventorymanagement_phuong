@@ -208,7 +208,7 @@ if __name__ == "__main__":
             else:
                 print(f"Warning: File not found: {path}")
 
-    # Loại bỏ trùng lặp (nếu có) và sắp xếp lại
+
     final_model_paths = sorted(list(set(final_model_paths)))
 
     if not final_model_paths:
@@ -220,5 +220,5 @@ if __name__ == "__main__":
     for p in final_model_paths:
         print(f" - {p}")
 
-    # Gọi hàm main
+
     main(args.config, final_model_paths)
