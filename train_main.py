@@ -305,7 +305,7 @@ def main(config_path: str) -> None:
                             )
                             # Set stop flag and exit both loops
                             stop_training = True
-                            break
+                            #break
         # Save model at the end or on early stop
         if save_path and (ep == episodes or (early_stop and stop_training)):
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
