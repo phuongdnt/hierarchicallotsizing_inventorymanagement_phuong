@@ -6,7 +6,7 @@ env:
   init_inventory: 20
   init_outstanding: 10
   holding_cost: [1.0, 1.0, 1.0]
-  backlog_cost: [10.0, 10.0, 10.0]
+  backlog_cost: [2.0, 2.0, 2.0]
   fixed_cost: 1.0
   price_discount: false
   discount_schedule: [1.0, 0.9, 0.8, 0.7, 0.6]
