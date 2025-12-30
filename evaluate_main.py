@@ -5,8 +5,8 @@ evaluate_main.py
 Script for evaluating a trained RL policy on the inventory management
 environments.  This script loads a saved model checkpoint, constructs
 the environment according to a configuration file, and runs all
-evaluation sequences to compute performance metrics such as total cost
-and bullwhip effect.
+evaluation sequences to compute performance metrics such as total cost,
+bullwhip effect, and service level.
 
 Usage::
 
@@ -25,13 +25,19 @@ import glob
 import yaml
 import torch
 import numpy as np
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from .agents.happo_agent import HAPPOAgent
 from .envs.serial_env import SerialInventoryEnv
 from .envs.network_env import NetworkInventoryEnv
 from .utils.logger import setup_logger
-from .utils.metrics import compute_episode_costs, compute_bullwhip, compute_service_levels
+from .utils.metrics import (
+    compute_episode_costs, 
+    compute_bullwhip, 
+    compute_service_levels,
+    compute_cycle_service_level
+)
+
 
 def _resolve_config_path(path: str) -> str:
     if os.path.isabs(path) and os.path.exists(path):
@@ -127,52 +133,125 @@ def load_agent(cfg: Dict[str, Any], model_path: str, env: Any) -> HAPPOAgent:
     return agent
 
 
-def evaluate_model(config_path: str, model_path: str, logger: logging.Logger) -> None:
+def evaluate_model(config_path: str, model_path: str, logger: logging.Logger) -> Dict[str, Any]:
+    """Evaluate a trained model and return metrics.
+    
+    Args:
+        config_path: Path to configuration file.
+        model_path: Path to saved model weights.
+        logger: Logger instance for output.
+    
+    Returns:
+        Dictionary containing evaluation metrics.
+    """
     cfg = parse_config(config_path)
 
     env = build_environment(cfg)
     n_eval = env.get_eval_num() if hasattr(env, "get_eval_num") else 0
     if n_eval == 0:
         logger.error("No evaluation data available in environment")
-        return
+        return {}
+    
     agent = load_agent(cfg, model_path, env)
+    
     # Run evaluation
     total_costs: List[np.ndarray] = []
     bullwhip_metrics: List[List[float]] = []
-    service_levels: List[List[float]] = []
+    fill_rate_service_levels: List[List[float]] = []
+    cycle_service_levels: List[List[float]] = []
+    
     for ep in range(n_eval):
         obs = env.reset(train=False)
         reward_hist: List[List[float]] = []
         order_hist: List[List[int]] = [[] for _ in range(env.agent_num)]
+        
         while True:
             actions, _ = agent.select_actions(obs)
             next_obs, rewards, done, _ = env.step(actions, one_hot=False)
+            
             # Record rewards and actions
             reward_hist.append(rewards)
             for i, a in enumerate(actions):
                 order_hist[i].append(a)
+            
             obs = next_obs
             if all(done):
                 break
+        
         # Compute cost per agent
         costs = compute_episode_costs(reward_hist)
         total_costs.append(np.array(costs))
+        
         # Compute bullwhip effect for this episode
         bw = compute_bullwhip(order_hist)
         bullwhip_metrics.append(bw)
-        service_levels.append(compute_service_levels(env.backlog_history))
+        
+        # FIXED: Compute service level using demand and fulfilled history
+        demand_hist = env.get_demand_history()
+        fulfilled_hist = env.get_fulfilled_history()
+        
+        # Fill Rate Service Level (Type 1)
+        sl_fill_rate = compute_service_levels(demand_hist, fulfilled_hist)
+        fill_rate_service_levels.append(sl_fill_rate)
+        
+        # Cycle Service Level (Type 2) - based on backlog history
+        sl_cycle = compute_cycle_service_level(env.backlog_history)
+        cycle_service_levels.append(sl_cycle)
+    
+    # Compute averages
     avg_costs = np.mean(total_costs, axis=0)
     avg_bw = np.mean(bullwhip_metrics, axis=0)
-    avg_service = np.mean(service_levels, axis=0)
-    logger.info(f"Average evaluation cost per agent: {avg_costs}")
-    logger.info(f"Average bullwhip effect per agent: {avg_bw}")
-    logger.info(f"Average service level per agent: {avg_service}")
+    avg_fill_rate_sl = np.mean(fill_rate_service_levels, axis=0)
+    avg_cycle_sl = np.mean(cycle_service_levels, axis=0)
+    
+    # Log results
+    logger.info(f"=" * 60)
+    logger.info(f"Model: {os.path.basename(model_path)}")
+    logger.info(f"=" * 60)
+    logger.info(f"Average Cost per Agent: {avg_costs}")
+    logger.info(f"  - Agent breakdown: {['Agent {}: {:.2f}'.format(i, c) for i, c in enumerate(avg_costs)]}")
+    logger.info(f"Average Bullwhip Effect per Agent: {avg_bw}")
+    logger.info(f"  - Agent breakdown: {['Agent {}: {:.4f}'.format(i, b) for i, b in enumerate(avg_bw)]}")
+    logger.info(f"Average Fill Rate Service Level (Type 1): {avg_fill_rate_sl}")
+    logger.info(f"  - Agent breakdown: {['Agent {}: {:.2%}'.format(i, s) for i, s in enumerate(avg_fill_rate_sl)]}")
+    logger.info(f"Average Cycle Service Level (Type 2): {avg_cycle_sl}")
+    logger.info(f"  - Agent breakdown: {['Agent {}: {:.2%}'.format(i, s) for i, s in enumerate(avg_cycle_sl)]}")
+    logger.info(f"=" * 60)
+    
+    return {
+        "costs": avg_costs.tolist(),
+        "bullwhip": avg_bw.tolist(),
+        "fill_rate_service_level": avg_fill_rate_sl.tolist(),
+        "cycle_service_level": avg_cycle_sl.tolist(),
+    }
+
 
 def main(config_path: str, model_paths: list[str]) -> None:
     logger = setup_logger()
+    
+    all_results = []
     for model_path in model_paths:
         logger.info(f"Evaluating model: {model_path}")
-        evaluate_model(config_path, model_path, logger)
+        results = evaluate_model(config_path, model_path, logger)
+        if results:
+            results["model"] = model_path
+            all_results.append(results)
+    
+    # Summary across all models
+    if len(all_results) > 1:
+        logger.info("\n" + "=" * 60)
+        logger.info("SUMMARY ACROSS ALL MODELS")
+        logger.info("=" * 60)
+        
+        avg_costs = np.mean([r["costs"] for r in all_results], axis=0)
+        std_costs = np.std([r["costs"] for r in all_results], axis=0)
+        avg_bw = np.mean([r["bullwhip"] for r in all_results], axis=0)
+        avg_sl = np.mean([r["fill_rate_service_level"] for r in all_results], axis=0)
+        
+        logger.info(f"Average Cost (mean ± std): {avg_costs} ± {std_costs}")
+        logger.info(f"Average Bullwhip: {avg_bw}")
+        logger.info(f"Average Fill Rate Service Level: {avg_sl}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate trained inventory RL agent")
