@@ -154,6 +154,11 @@ class SerialInventoryEnv:
         self.action_history: List[List[int]] = []
         self.record_act_sta: List[List[float]] = [[] for _ in range(self.level_num)]
         self.eval_bw_res: List[float] = []
+        
+        # NEW: Track demand and fulfilled for service level calculation
+        self.demand_history: List[List[int]] = []
+        self.fulfilled_history: List[List[int]] = []
+        
         # For reward smoothing
         self.alpha: float = 0.5
 
@@ -183,6 +188,11 @@ class SerialInventoryEnv:
             for _ in range(self.level_num)
         ]
         self.action_history = [[] for _ in range(self.level_num)]
+        
+        # NEW: Reset demand and fulfilled history
+        self.demand_history = [[] for _ in range(self.level_num)]
+        self.fulfilled_history = [[] for _ in range(self.level_num)]
+        
         # Load or generate demand sequence
         if not train:
             if not self.eval_data:
@@ -269,6 +279,15 @@ class SerialInventoryEnv:
     def get_inventory(self) -> List[int]:
         """Return the current inventory level for each agent."""
         return self.inventory
+
+    # NEW: Getter methods for service level calculation
+    def get_demand_history(self) -> List[List[int]]:
+        """Return demand history for each agent."""
+        return self.demand_history
+
+    def get_fulfilled_history(self) -> List[List[int]]:
+        """Return fulfilled demand history for each agent."""
+        return self.fulfilled_history
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -364,10 +383,8 @@ class SerialInventoryEnv:
            goods shipped may be lost.
         3. Compute unmet demand (positive backlog or negative inventory)
            and update inventory and backlog for each agent accordingly.
-        4. Generate new pipeline orders for each agent: downstream
-           agents place orders equal to their action; upstream agents
-           place orders equal to the incoming demand from downstream
-           agents (bounded by available inventory and pipeline receipts).
+        4. Generate new pipeline orders for each agent: each agent places
+           orders equal to their action (order quantity decision).
         5. Compute reward (negative cost) as the sum of holding cost,
            backlog cost, variable order cost (currently zero unless
            ``price_discount`` is enabled), and fixed ordering cost if
@@ -382,10 +399,18 @@ class SerialInventoryEnv:
         """
         # Save current actions for order logging
         self.action_history = [h + [a] for h, a in zip(self.action_history, actions)]
+        
         # Compute effective demand for each agent: downstream demand + backlog
-        # Downstream agent faces external customer demand
+        # Agent 0 (Retailer) faces external customer demand
+        # Agent i (i>0) faces the order from agent i-1
         downstream_demands: List[int] = [self.demand_list[self.step_num]] + actions[:-1]
+        
+        # NEW: Track demand faced by each agent
+        for i, d in enumerate(downstream_demands):
+            self.demand_history[i].append(d)
+        
         effective_demand = [d + self.backlog[i] for i, d in enumerate(downstream_demands)]
+        
         # Shipping loss is disabled by default; if enabled, some shipped
         # items are lost randomly.  For determinism, the loss rate can
         # depend on a global constant or be drawn per agent per period.
@@ -394,14 +419,25 @@ class SerialInventoryEnv:
         if random_shipping_loss:
             # Example: 10% maximum loss
             lost_rate = [1.0 - random.random() * 0.1 for _ in range(self.level_num)]
+        
         # Advance simulation clock
         self.step_num += 1
         rewards: List[float] = []
+        
         for i in range(self.level_num):
-            # Unmet demand (positive means backlog, negative means inventory remains)
             # Goods received this period: pipeline_orders[i][0], adjusted for loss
             received = int(self.pipeline_orders[i][0] * lost_rate[i])
-            unmet = effective_demand[i] - (self.inventory[i] + received)
+            
+            # Available inventory to fulfill demand
+            available = self.inventory[i] + received
+            
+            # NEW: Calculate fulfilled demand for this period
+            fulfilled = min(effective_demand[i], available)
+            self.fulfilled_history[i].append(fulfilled)
+            
+            # Unmet demand (positive means backlog, negative means inventory remains)
+            unmet = effective_demand[i] - available
+            
             # Update inventory and backlog
             if unmet > 0:
                 self.backlog[i] = unmet
@@ -410,27 +446,25 @@ class SerialInventoryEnv:
                 self.backlog[i] = 0
                 self.inventory[i] = -unmet
             self.backlog_history[i].append(self.backlog[i])
-            # Append new order into pipeline
-            if i == self.level_num - 1:
-                # Last agent orders according to its action
-                new_order = actions[i]
-            else:
-                # Upstream agents order enough to meet downstream demand
-                # Bound by available inventory + incoming pipeline
-                downstream_demand = effective_demand[i + 1]
-                upstream_available = self.inventory[i + 1] + int(self.pipeline_orders[i + 1][0] * lost_rate[i + 1])
-                new_order = int(min(downstream_demand, upstream_available))
-            # Append to pipeline and pop the oldest item
+            
+            # FIXED: Each agent places order according to its own action
+            # The order goes into the pipeline and will be received after lead_time
+            new_order = actions[i]
+            
+            # Append new order into pipeline and pop the oldest item
             self.pipeline_orders[i].append(new_order)
             self.pipeline_orders[i].pop(0)
+            
             # Compute ordering cost; price discount not currently active
             order_cost_var = 0.0
             if self.price_discount and actions[i] > 0:
                 # Determine bucket index based on action (0..action_dim-1)
                 bucket_idx = min(actions[i] // 5, len(self.discount_schedule) - 1)
                 order_cost_var = self.discount_schedule[bucket_idx] * actions[i]
+            
             # Fixed ordering cost if order quantity > 0
             order_cost_fix = self.fixed_cost if actions[i] > 0 else 0.0
+            
             # Compute reward (negative of cost)
             cost = (
                 self.inventory[i] * self.holding_cost[i]
@@ -439,6 +473,7 @@ class SerialInventoryEnv:
                 + order_cost_fix
             )
             rewards.append(-cost)
+        
         # Update bullwhip metrics during evaluation
         if not self.train:
             if self.step_num == self.episode_len:
