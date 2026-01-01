@@ -73,6 +73,12 @@ class HybridPlanner:
         # For leaf nodes in a network environment, use external demand
         # For serial environment, forecast using upcoming demand_list
         forecasts: List[List[int]] = []
+        def build_forecast(seq: List[int]) -> List[int]:
+            if not seq:
+                return [0 for _ in range(self.horizon)]
+            start = self.env.step_num
+            return [seq[t] if t < len(seq) else seq[-1] for t in range(start, start + self.horizon)]
+
         if hasattr(self.env, "external_demand_list") and self.env.external_demand_list:
             # network environment: external_demand_list is a list of lists per retailer
             # Construct a forecast for each agent
@@ -82,9 +88,7 @@ class HybridPlanner:
                 if i in leaf_indices:
                     idx = leaf_indices.index(i)
                     seq = self.env.external_demand_list[idx]
-                    # Take next horizon periods from current step
-                    start = self.env.step_num
-                    forecast = [seq[t] if t < len(seq) else seq[-1] for t in range(start, start + self.horizon)]
+                    forecast = build_forecast(seq)
                 else:
                     # For internal nodes, approximate demand forecast as constant equal
                     # to sum of recent orders from children or use current backlog
@@ -95,8 +99,7 @@ class HybridPlanner:
         else:
             # serial environment: use demand_list from env
             seq = getattr(self.env, "demand_list", [])
-            start = self.env.step_num
-            forecast_base = [seq[t] if t < len(seq) else seq[-1] for t in range(start, start + self.horizon)]
+            forecast_base = build_forecast(seq)
             for _ in range(self.env.agent_num):
                 forecasts.append(forecast_base)
         # Refine each action using the chosen heuristic

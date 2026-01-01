@@ -199,7 +199,13 @@ class NetworkInventoryEnv(BaseInventoryEnv):
         # State variables
         self.inventory: List[int] = []
         self.backlog: List[int] = []
+        self.backlog_history: List[List[int]] = []
         self.pipeline_orders: List[List[int]] = []
+        
+        # NEW: Track demand and fulfilled for service level calculation
+        self.demand_history: List[List[int]] = []
+        self.fulfilled_history: List[List[int]] = []
+        
         # Demand list holds list per retailer if eval_data_dirs provided; else generated
         self.external_demand_list: List[List[int]] = []
         self.step_num: int = 0
@@ -221,12 +227,18 @@ class NetworkInventoryEnv(BaseInventoryEnv):
         self.step_num = 0
         # Initialise state
         self.inventory = [self.init_inventory for _ in range(self.agent_num)]
+        self.backlog_history = [[] for _ in range(self.agent_num)]
         self.backlog = [0 for _ in range(self.agent_num)]
         self.pipeline_orders = [
             [self.init_outstanding for _ in range(self.lead_time)]
             for _ in range(self.agent_num)
         ]
         self.action_history = [[] for _ in range(self.agent_num)]
+        
+        # NEW: Reset demand and fulfilled history
+        self.demand_history = [[] for _ in range(self.agent_num)]
+        self.fulfilled_history = [[] for _ in range(self.agent_num)]
+        
         # Reset bullwhip stats
         self.record_act_sta = [[] for _ in range(self.agent_num)]
         self.eval_bw_res = []
@@ -292,6 +304,15 @@ class NetworkInventoryEnv(BaseInventoryEnv):
 
     def get_inventory(self) -> List[int]:
         return self.inventory
+
+    # NEW: Getter methods for service level calculation
+    def get_demand_history(self) -> List[List[int]]:
+        """Return demand history for each agent."""
+        return self.demand_history
+
+    def get_fulfilled_history(self) -> List[List[int]]:
+        """Return fulfilled demand history for each agent."""
+        return self.fulfilled_history
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -377,6 +398,7 @@ class NetworkInventoryEnv(BaseInventoryEnv):
         """Update environment state given order actions and return raw rewards."""
         # Save actions history
         self.action_history = [h + [a] for h, a in zip(self.action_history, actions)]
+        
         # Determine downstream demand for each agent: sum of child actions or external demand
         downstream_demands: List[int] = [0 for _ in range(self.agent_num)]
         # Leaf nodes: external demand
@@ -389,27 +411,46 @@ class NetworkInventoryEnv(BaseInventoryEnv):
                 for child in self.child_ids[parent_idx]:
                     s += actions[child]
                 downstream_demands[parent_idx] = s
+        
+        # NEW: Track demand faced by each agent
+        for i, d in enumerate(downstream_demands):
+            self.demand_history[i].append(d)
+        
         # Effective demand per agent
         effective_demand = [downstream_demands[i] + self.backlog[i] for i in range(self.agent_num)]
+        
         # Advance time
         self.step_num += 1
+        
         # Compute rewards and update state
         rewards: List[float] = []
         for i in range(self.agent_num):
             # Received goods from parent
             received = int(self.pipeline_orders[i][0])
-            unmet = effective_demand[i] - (self.inventory[i] + received)
+            
+            # Available inventory to fulfill demand
+            available = self.inventory[i] + received
+            
+            # NEW: Calculate fulfilled demand for this period
+            fulfilled = min(effective_demand[i], available)
+            self.fulfilled_history[i].append(fulfilled)
+            
+            unmet = effective_demand[i] - available
             if unmet > 0:
                 self.backlog[i] = unmet
                 self.inventory[i] = 0
             else:
                 self.backlog[i] = 0
                 self.inventory[i] = -unmet
-            # Determine new order to parent; last orders come from actions list
+            self.backlog_history[i].append(self.backlog[i])
+            
+            # Determine new order to parent; each agent orders based on their action
             new_order = actions[i]
+            
             # Append new order into pipeline and remove oldest
             self.pipeline_orders[i].append(new_order)
             self.pipeline_orders[i].pop(0)
+            
             # Compute costs
             order_cost_fix = self.fixed_cost if new_order > 0 else 0.0
             cost = (
@@ -418,6 +459,7 @@ class NetworkInventoryEnv(BaseInventoryEnv):
                 + order_cost_fix
             )
             rewards.append(-cost)
+        
         # Update bullwhip metrics if evaluation episode ended
         if not self.train and self.step_num == self.episode_len:
             for k in range(self.agent_num):
